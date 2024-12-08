@@ -1,6 +1,7 @@
-BOARD 	:= arduino:avr:uno
-PORT 	:= /dev/ttyACM0
+BOARD 	:= arduino:avr:nano:cpu=atmega328old # arduino:avr:uno
+PORT 	?= /dev/ttyACM0
 BIN 	:= build/$(notdir $(SKETCH:.cpp=.hex))
+BAUD	?= 9600
 
 all: compile
 
@@ -22,7 +23,7 @@ upload: compile
 	arduino-cli upload -p $(PORT) --fqbn $(BOARD) --input-dir build
 
 monitor:
-	  arduino-cli monitor -p /dev/ttyACM0 -b arduino:avr:uno --config 9600
+	  arduino-cli monitor -p $(PORT) -b $(BOARD) --config $(BAUD)
 
 clean:
 	rm -rf build

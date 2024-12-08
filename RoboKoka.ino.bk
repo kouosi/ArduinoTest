@@ -1,0 +1,208 @@
+#include <Arduino.h>
+#include <NMEAGPS.h>
+#include <pins_arduino.h>
+
+#include <MPU6050.h>
+#include <Wire.h>
+// #include <NMEAGPS.h>
+#include <SoftwareSerial.h>
+
+// MPU6050 setup
+MPU6050 mpu;
+
+// GPS setup
+#define RXPin 11
+#define TXPin 12
+#define GPSBaud 9600
+NMEAGPS gps;
+gps_fix fix;
+SoftwareSerial gpsSerial(RXPin, TXPin);
+
+// Buzzer setup
+#define BUZZER_PIN 5
+
+// Thresholds
+const float accelThreshold = 4.0;                 // in g-force
+const float gyroThreshold = 100.0;                // in deg/sec
+const float maxTiltThreshold = 35.0;              // Tilt angle in degrees
+const unsigned long tiltDurationThreshold = 2000; // 2 seconds
+const unsigned long detectionWindow = 3000;       // 3 seconds for confirming accident
+
+// Time intervals
+const unsigned long checkInterval = 3000; // 3 seconds
+unsigned long lastCheckTime = 0;
+
+// Variables for accident detection
+bool accidentDetected = false;
+unsigned long accidentConfirmedTime = 0;
+bool tiltAlert = false;
+unsigned long tiltStartTime = 0;
+
+namespace Gps {}
+
+namespace Gyro {
+
+void init() {}
+
+void getLocation() {
+    Serial.println("Fetching GPS location...");
+    while (gps.available(gpsSerial)) {
+        fix = gps.read();
+        if (fix.valid.location) {
+            Serial.print("Latitude: ");
+            Serial.print(fix.latitude(), 6);
+            Serial.print(", Longitude: ");
+            Serial.println(fix.longitude(), 6);
+            return;
+        }
+    }
+}
+
+void printLocation() {
+
+    Serial.println("GPS location not available.");
+}
+}
+
+namespace Sim {
+
+void init() {
+
+}
+
+}
+
+/* Arduino Functions */
+void setup() {
+    Serial.begin(9600);
+
+    gpsSerial.begin(GPSBaud);
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW);
+
+    // MPU6050 setup
+    Serial.println("Initializing MPU6050...");
+    Wire.begin();
+    mpu.initialize();
+    if (!mpu.testConnection()) {
+        Serial.println("MPU6050 connection failed!");
+        while (1)
+            ;
+    }
+    Serial.println("MPU6050 initialized successfully.");
+}
+
+void loop() {
+    if (millis() - lastCheckTime >= checkInterval) {
+        lastCheckTime = millis();
+        monitorSensors();
+    }
+
+    if (accidentDetected) {
+        handleAccidentAlert();
+    }
+}
+
+void handleAccidentAlert() {
+    Serial.println("Accident detected! Activating buzzer...");
+    digitalWrite(BUZZER_PIN, HIGH); // Turn on buzzer
+    delay(5000);                    // Keep the buzzer on for 5 seconds
+    digitalWrite(BUZZER_PIN, LOW);  // Turn off buzzer
+
+    // Get and print location
+    printLocation();
+
+    // Reset the system for future detections
+    accidentDetected = false;
+}
+
+void monitorSensors() {
+    static bool accidentStarted = false;
+    int16_t ax, ay, az, gx, gy, gz;
+
+    // Read accelerometer and gyroscope data
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+    // Convert accelerometer values to G-force
+    float gForceX = ax / 16384.0;
+    float gForceY = ay / 16384.0;
+    float gForceZ = az / 16384.0;
+
+    // Convert gyroscope values to degrees/second
+    float gyroX = gx / 131.0;
+    float gyroY = gy / 131.0;
+    float gyroZ = gz / 131.0;
+
+    // Calculate tilt angles
+    float pitch = atan2(gForceX, sqrt(gForceY * gForceY + gForceZ * gForceZ)) * 180.0 / PI;
+    float roll = atan2(gForceY, sqrt(gForceX * gForceX + gForceZ * gForceZ)) * 180.0 / PI;
+
+    // Debugging: Display sensor and tilt values
+    Serial.print("Accel (g): ");
+    Serial.print(gForceX);
+    Serial.print(", ");
+    Serial.print(gForceY);
+    Serial.print(", ");
+    Serial.print(gForceZ);
+    Serial.print(" | Gyro (deg/sec): ");
+    Serial.print(gyroX);
+    Serial.print(", ");
+    Serial.print(gyroY);
+    Serial.print(", ");
+    Serial.print(gyroZ);
+    Serial.print(" | Tilt (pitch, roll): ");
+    Serial.print(pitch);
+    Serial.print(", ");
+    Serial.println(roll);
+
+    // Check for tilt exceeding the threshold
+    if (abs(pitch) > maxTiltThreshold || abs(roll) > maxTiltThreshold) {
+        if (!tiltAlert) {
+            tiltAlert = true;
+            tiltStartTime = millis();
+            Serial.println("Excessive tilt detected! Monitoring duration...");
+        } else if (millis() - tiltStartTime >= tiltDurationThreshold) {
+            accidentDetected = true;
+            accidentConfirmedTime = millis();
+            Serial.println("Tilt threshold exceeded for duration. Accident detected!");
+            tiltAlert = false; // Reset for future detections
+        }
+    } else {
+        tiltAlert = false; // Reset tilt monitoring
+    }
+
+    // Check for accelerometer or gyroscope thresholds
+    bool accelExceeded =
+        (abs(gForceX) > accelThreshold || abs(gForceY) > accelThreshold || abs(gForceZ) > accelThreshold);
+    bool gyroExceeded = (abs(gyroX) > gyroThreshold || abs(gyroY) > gyroThreshold || abs(gyroZ) > gyroThreshold);
+
+    if (accelExceeded || gyroExceeded) {
+        if (!accidentStarted) {
+            accidentStarted = true;
+            accidentConfirmedTime = millis();
+            Serial.println("Potential accident detected, monitoring...");
+        } else if (millis() - accidentConfirmedTime >= detectionWindow) {
+            accidentDetected = true;
+            Serial.println("Accident confirmed!");
+            accidentStarted = false; // Reset for future detections
+        }
+    } else {
+        accidentStarted = false; // Reset if no threshold exceeded
+    }
+}
+
+void printLocation() {
+    Serial.println("Fetching GPS location...");
+
+    while (gps.available(gpsSerial)) {
+        fix = gps.read();
+        if (fix.valid.location) {
+            Serial.print("Latitude: ");
+            Serial.print(fix.latitude(), 6);
+            Serial.print(", Longitude: ");
+            Serial.println(fix.longitude(), 6);
+            return;
+        }
+    }
+    Serial.println("GPS location not available.");
+}

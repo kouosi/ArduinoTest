@@ -1,0 +1,10 @@
+BasedOnStyle: Microsoft
+AllowShortFunctionsOnASingleLine: InlineOnly
+BreakBeforeBraces: Attach
+ColumnLimit: 120
+IndentWidth: 4
+PointerAlignment: Left
+SortIncludes: false
+SpaceAfterCStyleCast: true
+TabWidth: 4
+UseTab: Never
